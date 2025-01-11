@@ -1,263 +1,186 @@
-# Chat Log compressor for Windsurf
+# Windsurf Chat Log Parser
 
-This script is used to take long chat histories from Windsurf and convert that to a condensed file that can be used on new sessions with Windsurf to continue working and maintain context between sessions.
+A specialized tool for optimizing chat history context in Windsurf, the world's
+first agentic IDE. This tool processes chat logs into a Semantic Parsing Record
+(SPR) format, enabling better context retention and understanding across coding
+sessions.
 
-## Usage:
+## Features
 
-1. Copy all text in your chat session with Windsurf and paste in into a file
-2. Run this script against it
-
-## Example
-
-### Legend
-
-```
-#T: Timestamp markers
-#S: Session type
-#P: Priority level
-@H: History entries with compact timestamps
-@CUR: Current state block
-@CTX: Context block with dependencies
-```
-
-### Sample Input
-
-```
-I'll help you check the error log. Let me take a look at the contents of err.txt to understand what issues you're experiencing.
-
-Analyzed
-
-err.txt:(1-200)
-I see the error. There's an issue with the BuildService initialization. The error occurs because the GameDataManager class doesn't have a load_data method that's being called during initialization. Let me check the relevant code to help fix this.
-
-Searched codebase
-
-51 results
-Let me check the GameDataManager class to understand why the load_data method is missing.
-
-Searched codebase
-
-77 results
-I see the issue now. There are two different GameDataManager classes in the codebase:
-
-One in /api/models/game_data/data_manager.py with a load_data_files method
-Another in /api/models/game_data/manager.py with async data loading via get_data and _reload_data
-The error occurs because the BuildService is trying to use the older synchronous load_data method, but it's getting an instance of the newer async version of GameDataManager.
-
-Let me help you fix this by updating the BuildService to use the correct async data loading pattern.
-
-Edit:
-service.py
-+4
--3
-1917
-Preview
-Apply
-{{ ... }}
-    def __init__(self, settings: Settings):
-        """Initialize the build service.
-        
-        Args:
-            settings
-```
-
-
-### Sample Output
-
-```
-#T:2025-01-11T11:39:31-05:00
-#S:SCHEMA_VALIDATION
-#P:HIGH
-
-@H[10:45]DOC/init>stat_boosts.md
-@H[11:20]DISC>essences_separate{/data/indexed/classes/*/essences.json}
-@H[11:24]MOD>rm_essence_refs{
-  F:/data/indexed/gems/stat_boosts.json
-  F:/api/models/game_data/schemas/stats.py
-  F:/api/models/game_data/schemas.py
-  A:rm_empty_arrays,rm_schema_fields
-}
-@H[11:26]DOC/update>stat_boosts.md{
-  A:clarify_separation,add_categories
-}
-@H[11:28]DOC/fix>stat_boosts.md{
-  A:restore_json_comments,improve_readability
-}
-@H[11:37]DISC>mothers_lament_incorrect{
-  I:health_threshold_only_rank10,
-  A:fixed_example_in_docs
-}
-
-@CUR{
-  TASK:schema_validation
-  STATE:in_progress
-  MODS:[
-    docs/game/stat_boosts.md
-    data/indexed/gems/stat_boosts.json
-    api/models/game_data/schemas/stats.py
-    api/models/game_data/schemas.py
-  ]
-  NEXT:[
-    verify_indexed_data
-    check_essence_refs
-    update_related_docs
-  ]
-}
-
-@CTX{
-  FOCUS:data_integrity
-  DEPS:[stats,essences,gems]
-  SCHEMA_V:1.0.0
-  ISSUES:[
-    mothers_lament_incorrect_conditions,
-    essence_stat_separation_needed
-  ]
-}
-```
-
-
-## Overview
-
-The script processes chat logs and generates an SPR format that includes:
-- Timestamps and session metadata
-- History of actions and changes
-- File modifications and their impacts
-- Error traces and discussion points
-- System state and context
-- Component dependencies
+- Semantic parsing of chat histories
+- Intelligent context extraction
+- Problem and solution linking
+- State change tracking
+- Dependency analysis
+- Error context preservation
 
 ## Installation
 
-### Requirements
-- Python 3.8 or higher
-- No external dependencies required (uses standard library only)
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/windsurfchat.git
 
-### Setup
-1. Clone this repository or download `txt2spr.py`
-2. Make the script executable:
-   ```bash
-   chmod +x txt2spr.py
-   ```
+# Navigate to the directory
+cd windsurfchat
+
+# Install dependencies
+pip install -r requirements.txt
+```
 
 ## Usage
 
-Basic usage:
+1. Export your Windsurf chat history to a text file
+2. Run the parser:
+
 ```bash
-./txt2spr.py chat_history.txt
+python cli.py chat_history.txt
 ```
 
-Options:
+The tool will generate a `chat_history.spr.txt` file containing the optimized
+context.
+
+## SPR Format
+
+The Semantic Parsing Record (SPR) uses the following structure:
+
+### Metadata Markers
+
+- `#T`: Timestamp (ISO 8601 format)
+- `#S`: Session type (DEBUG, FEATURE, REFACTOR, etc.)
+- `#I`: Main issue or task
+
+### Context Blocks
+
+```text
+@CONTEXT{
+  "issues": [
+    {
+      "type": "category",
+      "summary": "Concise problem description",
+      "details": ["Detailed information"],
+      "context": {"relevant": "metadata"}
+    }
+  ],
+  "reasoning": ["Chain of thought"]
+}
+```
+
+### Change Tracking
+
+```text
+@CHANGES{
+  "file_path": ["modifications"]
+}
+```
+
+### State Management
+
+```text
+@STATE{
+  "dependencies": ["required components"],
+  "changes": ["state modifications"]
+}
+```
+
+### Error Context
+
+```text
+@ERRORS{
+  "type": "error_category",
+  "discussion": {
+    "analysis": ["investigation steps"],
+    "solutions": ["proposed fixes"]
+  }
+}
+```
+
+## Development
+
+### Prerequisites
+
+- Python 3.8+
+- pip package manager
+- Git
+
+### Setup Development Environment
+
 ```bash
-./txt2spr.py [-h] [-o OUTPUT] [-v] [--debug] input_file
+# Create a virtual environment
+python -m venv venv
+
+# Activate the environment
+source venv/bin/activate  # Unix/macOS
+venv\Scripts\activate     # Windows
+
+# Install development dependencies
+pip install -r requirements-dev.txt
+```
+
+### Running Tests
+
+```bash
+pytest tests/
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Best Practices
+
+- Follow PEP 8 style guide
+- Write comprehensive docstrings
+- Add unit tests for new features
+- Update documentation as needed
+- Use type hints for better code clarity
+
+## Command Line Options
+
+```bash
+python cli.py [-h] [-v] [--debug] [-o OUTPUT] input_file
 ```
 
 Arguments:
-- `input_file`: Path to the input chat log file
-- `-o, --output`: Path to the output SPR file (default: input_file_spr.txt)
-- `-v, --verbose`: Enable verbose logging
-- `--debug`: Enable debug mode with additional output
-- `-h, --help`: Show help message
 
-## Input Format
+- `input_file`: Path to the chat history file to parse
+- `-h, --help`: Show this help message and exit
+- `-v, --verbose`: Enable verbose output for debugging
+- `--debug`: Enable debug mode with additional logging
+- `-o, --output`: Specify output file path (default: input_file.spr.txt)
 
-The script expects a chat log file with conversations in the format:
+## Troubleshooting
 
-```
-Human: message
-Assistant: response
-Human: message
-Assistant: response
-...
-```
+Common issues and solutions:
 
-## Output Format
+1. **Parser Error**: Ensure chat history format is correct
+2. **Memory Issues**: Try processing a smaller chat history
+3. **Missing Context**: Check input file for completeness
 
-The generated SPR format follows this structure:
+## License
 
-```
-#T:2025-01-11T16:30:00-05:00    # Timestamp
-#S:SYSTEM_REFACTOR              # Session type
-#P:CRITICAL                     # Priority level
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-@H[10:15]MOD>target{           # History entry
-  F:[                          # Files modified
-    path:component:changes
-  ]
-  I:[impacts]                  # Impacts
-  A:[actions]                  # Actions
-  E:[error_traces]             # Errors
-  D:[discussion_points]        # Discussion
-}
+## Security
 
-@CUR{                          # Current state
-  TASK:current_task
-  STATE:current_state
-  MODS:[modifications]
-  NEXT:[next_steps]
-  BLOCKERS:[blockers]
-}
+- Never commit sensitive data or API keys
+- Sanitize all input files
+- Follow secure coding practices
+- Report security issues responsibly
 
-@CTX{                          # Context
-  FOCUS:main_focus
-  DEPS:[dependencies]
-  SCHEMA_V:version
-  DATA_V:version
-  ISSUES:[issues]
-  TOOLS:[tools]
-  CONFIGS:{configs}
-  ARTIFACTS:[artifacts]
-}
+## Support
 
-@COMPONENTS{                    # Component dependencies
-  component:[dependencies]
-}
-```
+For support, please:
 
-## Examples
+1. Check the documentation
+2. Search existing issues
+3. Open a new issue if needed
 
-1. Basic conversion:
-```bash
-./txt2spr.py chat.txt
-```
+## Acknowledgments
 
-2. Custom output file with verbose logging:
-```bash
-./txt2spr.py chat.txt -o output.spr -v
-```
-
-3. Debug mode:
-```bash
-./txt2spr.py chat.txt --debug
-```
-
-## Components
-
-The script consists of several key components:
-
-1. **ChatLogParser**: Main parser class that processes the chat log
-2. **CodeBlockParser**: Extracts and analyzes code blocks
-3. **ErrorParser**: Parses error traces and exceptions
-4. **Various Data Classes**:
-
-   - FileReference: Tracks file changes
-   - ErrorTrace: Stores error information
-   - HistoryEntry: Records chat history entries
-   - Context: Maintains system context
-   - CurrentState: Tracks current state
-
-## Error Handling
-
-The script handles various error conditions:
-- Missing input files
-- Invalid file formats
-- Parsing errors
-- Output directory issues
-
-Error messages are logged appropriately based on verbosity level.
-
-## Limitations
-
-- Limited to single-file processing
-- May not capture complex code relationships
-- Timestamp detection relies on specific format
-
+- Windsurf IDE team
+- Codeium engineering team
+- Open source contributors

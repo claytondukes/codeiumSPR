@@ -11,6 +11,7 @@ from pathlib import Path
 from enum import Enum
 import ast
 from collections import defaultdict
+import copy
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +41,7 @@ class ComponentType(Enum):
     ROUTE = "route"
     MODEL = "model"
     SERVICE = "service"
+    CONFIG = "config"
 
 @dataclass
 class FileReference:
@@ -90,6 +92,20 @@ class CurrentState:
     modifications: List[FileReference]
     next_steps: List[str]
     blockers: List[str]
+
+@dataclass
+class ContextBlock:
+    """AI-optimized context block for session understanding."""
+    timestamp: str
+    session_type: str
+    main_issue: str
+    core_problems: List[str]
+    solution_approaches: List[str]
+    key_files: Dict[str, List[str]]  # file -> [changes]
+    dependencies: Dict[str, List[str]]  # component -> [dependencies]
+    reasoning_chain: List[Dict[str, Any]]  # List of {action, reason, result}
+    state_changes: Dict[str, Any]  # Track important state changes
+    error_context: Dict[str, List[str]]  # error_type -> [relevant_context]
 
 class CodeBlockParser:
     """Parses code blocks and their context from chat messages."""
@@ -198,600 +214,614 @@ class ErrorParser:
         return None
 
 class ChatLogParser:
-    """Parses chat logs into structured SPR format."""
+    """Parses chat logs into structured SPR format optimized for AI consumption."""
     
     def __init__(self, file_path: str):
         self.file_path = Path(file_path)
-        self.history_entries: List[HistoryEntry] = []
-        self.context = None
-        self.current_state = None
-        self.modified_files: Dict[str, FileReference] = {}
-        self.issues: Set[str] = set()
-        self.start_time = None
+        self.context_blocks: List[ContextBlock] = []
+        self.current_block = None
         self.code_parser = CodeBlockParser()
         self.error_parser = ErrorParser()
-        self.components: Dict[str, Set[str]] = defaultdict(set)
         
-        # Regex patterns for parsing
-        self.timestamp_pattern = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
-        self.file_patterns = [
-            # Direct file paths
-            r'(?:/[a-zA-Z0-9_.-]+)+\.[a-zA-Z0-9]+',
-            # File references in code or logs
-            r'(?:^|\s)([a-zA-Z0-9_-]+\.[a-zA-Z0-9]+)',
-            # File markers
-            r'@([a-zA-Z0-9_-]+\.[a-zA-Z0-9]+)',
-            # Common file operations
-            r'(?:edit|update|modify|create|delete)\s+([a-zA-Z0-9/_-]+\.[a-zA-Z0-9]+)',
-            # Git operations
-            r'(?:add|commit|push)\s+([a-zA-Z0-9/_-]+\.[a-zA-Z0-9]+)',
-            # Error traces
-            r'File "([^"]+)"',
-            # Common prefixes
-            r'(?:api|docs|data|tests)/[a-zA-Z0-9/_-]+\.[a-zA-Z0-9]+'
+        # Enhanced patterns for AI context extraction
+        self.issue_patterns = [
+            r'(?:error|issue|problem|bug).*?:\s*(.*?)(?:\n|$)',
+            r'(?:fails?|breaks?|doesn\'t work).*?(?:because|when|if)\s*(.*?)(?:\n|$)',
+            r'(?:need|should|must)\s+(?:to\s+)?(?:fix|resolve|address)\s*(.*?)(?:\n|$)'
         ]
-        
-        # Common action verbs for change detection
-        self.action_verbs = {
-            'add': 'added',
-            'remove': 'removed',
-            'update': 'updated',
-            'fix': 'fixed',
-            'modify': 'modified',
-            'implement': 'implemented',
-            'refactor': 'refactored',
-            'move': 'moved',
-            'rename': 'renamed',
-            'delete': 'deleted'
-        }
+        self.solution_patterns = [
+            r'(?:fix|solve|resolve)\s+(?:this|the|that)\s+by\s*(.*?)(?:\n|$)',
+            r'(?:let|going|need)\s+(?:me|to)\s*(?:try|implement|add|update)\s*(.*?)(?:\n|$)',
+            r'(?:solution|approach|fix)\s+(?:is|would be)\s+to\s*(.*?)(?:\n|$)'
+        ]
+        self.reasoning_patterns = [
+            r'(?:because|since|as)\s*(.*?)(?:\n|$)',
+            r'(?:this|that|it)\s+(?:means|implies|suggests)\s*(.*?)(?:\n|$)',
+            r'(?:the|this|that)\s+(?:leads to|results in|causes)\s*(.*?)(?:\n|$)'
+        ]
 
-    def parse_component_type(self, file_path: str) -> ComponentType:
-        """
-        Determine component type from file path.
-        
-        Args:
-            file_path: Path to the file
+    def parse_log(self):
+        """Parse the chat log into AI-optimized context blocks."""
+        with open(self.file_path, 'r') as f:
+            content = f.read()
             
-        Returns:
-            ComponentType enum value
-        """
-        if file_path.startswith('/api/'):
-            if 'routes' in file_path:
-                return ComponentType.ROUTE
-            elif 'models' in file_path:
-                return ComponentType.MODEL
-            elif 'services' in file_path:
-                return ComponentType.SERVICE
-            return ComponentType.API
-        elif file_path.startswith('/data/'):
-            return ComponentType.DATA
-        elif file_path.startswith('/docs/'):
-            return ComponentType.DOCS
-        elif 'schema' in file_path.lower():
-            return ComponentType.SCHEMA
-        elif 'build' in file_path.lower():
-            return ComponentType.BUILD
-        return ComponentType.API
+        # Split into logical blocks based on context shifts
+        blocks = self._split_into_context_blocks(content)
+        
+        for block in blocks:
+            context = ContextBlock(
+                timestamp=self._extract_timestamp(block),
+                session_type=self._infer_session_type(block),
+                main_issue=self._extract_main_issue(block),
+                core_problems=self._extract_core_problems(block),
+                solution_approaches=self._extract_solutions(block),
+                key_files=self._extract_file_changes(block),
+                dependencies=self._extract_dependencies(block),
+                reasoning_chain=self._extract_reasoning_chain(block),
+                state_changes=self._extract_state_changes(block),
+                error_context=self._extract_error_context(block)
+            )
+            self.context_blocks.append(context)
 
-    def parse_file_references(self, text: str) -> List[str]:
-        """
-        Extract file references from text.
+    def generate_spr(self) -> str:
+        """Generate AI-optimized SPR format."""
+        output = []
         
-        Args:
-            text: Text to parse
+        for block in self.context_blocks:
+            # Metadata section
+            output.append(f"#T:{block.timestamp}")
+            output.append(f"#S:{block.session_type}")
+            output.append(f"#I:{block.main_issue}")
             
-        Returns:
-            List of file paths found
-        """
-        files = set()
-        for pattern in self.file_patterns:
-            matches = re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE)
-            for match in matches:
-                # Get the full match or first group if exists
-                file = match.group(1) if match.groups() else match.group(0)
-                # Clean up the file path
-                file = file.strip('"\'').strip()
-                # Add if it looks like a valid file
-                if '.' in file and not file.startswith(('.', '..', '/')):
-                    files.add(file)
-                elif file.startswith('/'):
-                    files.add(file.lstrip('/'))
+            # Consolidate problems and link solutions
+            consolidated_problems = self._consolidate_problems(block.core_problems)
+            linked_problems = self._link_solutions_to_problems(
+                consolidated_problems, 
+                block.solution_approaches
+            )
+            
+            # Core problems and solutions with reasoning
+            output.append("@CONTEXT{")
+            output.append(json.dumps({
+                'issues': linked_problems,
+                'reasoning': block.reasoning_chain
+            }, indent=2))
+            output.append("}")
+            
+            # File changes with semantic meaning
+            if block.key_files:
+                output.append("@CHANGES{")
+                output.append(json.dumps(block.key_files, indent=2))
+                output.append("}")
+            
+            # Dependencies and state changes
+            if block.dependencies or block.state_changes:
+                output.append("@STATE{")
+                state_info = {}
+                if block.dependencies:
+                    state_info['dependencies'] = block.dependencies
+                if block.state_changes:
+                    state_info['changes'] = block.state_changes
+                output.append(json.dumps(state_info, indent=2))
+                output.append("}")
+            
+            # Error context if present
+            if block.error_context:
+                output.append("@ERRORS{")
+                # Organize discussion points
+                organized = self._organize_discussion(
+                    block.error_context.get('discussion', [])
+                )
+                output.append(json.dumps({
+                    **block.error_context,
+                    'discussion': organized
+                }, indent=2))
+                output.append("}")
+            
+            output.append("")  # Block separator
         
-        return list(files)
+        return "\n".join(output)
 
-    def extract_discussion_points(self, text: str) -> List[str]:
-        """
-        Extract discussion points from text.
+    def _split_into_context_blocks(self, content: str) -> List[str]:
+        """Split content into logical blocks based on context shifts."""
+        blocks = []
+        current_block = []
         
-        Args:
-            text: Text to parse
-            
-        Returns:
-            List of discussion points
-        """
-        points = []
-        lines = text.split('\n')
-        current_point = []
-        
+        # Split on Human/Assistant markers and major section headers
+        lines = content.split('\n')
         for line in lines:
-            stripped = line.strip()
-            if stripped.startswith(('- ', '* ', '1. ')):
-                if current_point:
-                    points.append(' '.join(current_point))
-                current_point = [stripped[2:]]
-            elif stripped and current_point:
-                current_point.append(stripped)
-            elif not stripped and current_point:
-                points.append(' '.join(current_point))
-                current_point = []
-        
-        if current_point:
-            points.append(' '.join(current_point))
-        
-        return points
-
-    def parse_dependencies(self, text: str) -> List[str]:
-        """
-        Extract dependencies from text.
-        
-        Args:
-            text: Text to parse
+            # New context indicators
+            if (line.startswith(('Human:', 'Assistant:', '## ', '# ')) or 
+                re.match(r'^[A-Z][a-z]+ \d{1,2}, \d{4}', line)):
+                if current_block:
+                    blocks.append('\n'.join(current_block))
+                    current_block = []
+            current_block.append(line)
             
-        Returns:
-            List of dependencies found
-        """
-        deps = set()
+        # Add final block
+        if current_block:
+            blocks.append('\n'.join(current_block))
+            
+        # Merge small blocks that are likely part of the same context
+        merged_blocks = []
+        temp_block = []
+        for block in blocks:
+            if len(block.split('\n')) < 5 and temp_block:  # Small block
+                temp_block.append(block)
+            else:
+                if temp_block:
+                    merged_blocks.append('\n'.join(temp_block))
+                    temp_block = []
+                temp_block.append(block)
+                
+        if temp_block:
+            merged_blocks.append('\n'.join(temp_block))
+            
+        return merged_blocks
+
+    def _extract_timestamp(self, block: str) -> str:
+        """Extract timestamp from block."""
+        # Look for ISO format timestamps
+        iso_pattern = r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:?\d{2})?'
+        if match := re.search(iso_pattern, block):
+            return match.group(0)
+            
+        # Look for common date/time formats
         patterns = [
-            r'from\s+(\w+(?:\.\w+)*)\s+import',
-            r'import\s+(\w+(?:\.\w+)*)',
-            r'requires\s+(\w+(?:\.\w+)*)',
-            r'depends\s+on\s+(\w+(?:\.\w+)*)',
-            r'using\s+(\w+(?:\.\w+)*)',
-            r'needs\s+(\w+(?:\.\w+)*)'
+            r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}',
+            r'\w+ \d{1,2}, \d{4} \d{1,2}:\d{2} (?:AM|PM)',
         ]
         
         for pattern in patterns:
-            matches = re.finditer(pattern, text)
-            for match in matches:
-                deps.add(match.group(1))
-        
-        return list(deps)
+            if match := re.search(pattern, block):
+                # Convert to ISO format
+                dt = datetime.datetime.strptime(match.group(0), "%Y-%m-%d %H:%M:%S")
+                return dt.isoformat()
+                
+        # Default to current time if no timestamp found
+        return datetime.datetime.now().isoformat()
 
-    def determine_target(self, chunk: str) -> str:
-        """
-        Determine the target of the action.
-        
-        Args:
-            chunk: Text chunk to analyze
-            
-        Returns:
-            String describing the target
-        """
-        # Look for specific components or systems
-        component_patterns = [
-            (r'(?:in|update|fix)\s+(\w+)_system', "system"),
-            (r'(?:in|with)\s+(\w+)_service', "service"),
-            (r'(?:in|at)\s+(\w+)_component', "component"),
-            (r'(?:in|for)\s+(\w+)_manager', "manager"),
-            (r'(?:update|fix)\s+(\w+)_configuration', "config"),
-            (r'error\s+in\s+(\w+)', "error"),
-            (r'issue\s+with\s+(\w+)', "issue"),
-            (r'bug\s+in\s+(\w+)', "bug"),
-            (r'refactor\s+(\w+)', "refactor"),
-            (r'implement\s+(\w+)', "implement")
-        ]
-        
-        for pattern, category in component_patterns:
-            match = re.search(pattern, chunk.lower())
-            if match:
-                return f"{category}:{match.group(1)}"
-        
-        # Look for file-based targets
-        file_refs = self.parse_file_references(chunk)
-        if file_refs:
-            return f"file:{file_refs[0]}"
-        
-        # Default based on content analysis
-        for action in self.action_verbs:
-            if action in chunk.lower():
-                return f"{action}_operation"
-        
-        return "general_update"
-
-    def analyze_changes(self, chunk: str, file_path: str) -> List[str]:
-        """
-        Analyze changes in a chunk of text.
-        
-        Args:
-            chunk: Text chunk to analyze
-            file_path: Path to the file being changed
-            
-        Returns:
-            List of change descriptions
-        """
-        changes = []
-        
-        # Look for specific change patterns
-        for verb, change_type in self.action_verbs.items():
-            pattern = f"{verb}(?:ed|ing)?\\s+(\\w+)"
-            matches = re.finditer(pattern, chunk, re.IGNORECASE)
-            for match in matches:
-                target = match.group(1)
-                changes.append(f"{change_type}_{target}")
-        
-        # Look for code blocks that might show changes
-        code_blocks = self.code_parser.extract_code_blocks(chunk)
-        if code_blocks:
-            for block in code_blocks:
-                if '+' in block['code'] or '-' in block['code']:
-                    changes.append("code_modified")
-                if 'def ' in block['code']:
-                    changes.append("function_modified")
-                if 'class ' in block['code']:
-                    changes.append("class_modified")
-        
-        # Look for error fixes
-        if "error" in chunk.lower() or "fix" in chunk.lower():
-            error = self.error_parser.parse_error(chunk)
-            if error:
-                changes.append(f"fixed_{error.type}")
-        
-        return changes if changes else ["general_update"]
-
-    def extract_impacts(self, chunk: str) -> List[str]:
-        """
-        Extract impacts from a chunk of text.
-        
-        Args:
-            chunk: Text chunk to analyze
-            
-        Returns:
-            List of impact descriptions
-        """
-        impacts = []
-        
-        impact_patterns = {
-            r'breaks?\s+(\w+)': "breaks",
-            r'affects?\s+(\w+)': "affects",
-            r'requires?\s+(\w+)': "requires",
-            r'depends?\s+on\s+(\w+)': "depends_on",
-            r'impact(?:s|ed)?\s+(\w+)': "impacts",
-            r'chang(?:es|ed)?\s+(\w+)': "changes",
-            r'modif(?:ies|ied)?\s+(\w+)': "modifies",
-            r'needs?\s+update\s+to\s+(\w+)': "needs_update"
+    def _infer_session_type(self, block: str) -> str:
+        """Infer the type of development session."""
+        # Look for explicit indicators
+        type_indicators = {
+            'DEBUG': ['error', 'bug', 'fix', 'issue', 'problem', 'traceback'],
+            'FEATURE': ['implement', 'add', 'create', 'new feature'],
+            'REFACTOR': ['refactor', 'improve', 'optimize', 'clean', 'restructure'],
+            'TEST': ['test', 'verify', 'validate', 'check'],
+            'DOCS': ['document', 'explain', 'clarify', 'readme'],
+            'CONFIG': ['configure', 'setup', 'install', 'environment'],
         }
         
-        for pattern, impact_type in impact_patterns.items():
-            matches = re.finditer(pattern, chunk, re.IGNORECASE)
-            for match in matches:
-                target = match.group(1)
-                impacts.append(f"{impact_type}_{target}")
-        
-        # Look for dependencies
-        deps = self.parse_dependencies(chunk)
-        if deps:
-            impacts.extend([f"depends_on_{dep}" for dep in deps])
-        
-        # Look for error impacts
-        if "error" in chunk.lower():
-            error = self.error_parser.parse_error(chunk)
-            if error:
-                impacts.append(f"causes_{error.type}")
-        
-        return impacts if impacts else ["no_significant_impact"]
+        block_lower = block.lower()
+        for session_type, indicators in type_indicators.items():
+            if any(ind in block_lower for ind in indicators):
+                return session_type
+                
+        # Look for code modifications
+        if '```' in block or 'def ' in block or 'class ' in block:
+            return 'CODE_MOD'
+            
+        return 'GENERAL'
 
-    def parse_log(self):
-        """Parse the entire chat log into structured format."""
-        logger.info("Beginning chat log parse")
+    def _extract_main_issue(self, block: str) -> str:
+        """Extract the main issue being discussed."""
+        # First look for explicit issue statements
+        for pattern in self.issue_patterns:
+            if match := re.search(pattern, block, re.IGNORECASE):
+                return match.group(1).strip()
+                
+        # Look for error traces
+        if 'Traceback' in block or 'Error:' in block:
+            if error_match := re.search(r'(?:Traceback.*?|Error:)(.*?)(?=\n\w|$)', block, re.DOTALL):
+                return error_match.group(1).strip()
+                
+        # Look for task/goal statements
+        task_patterns = [
+            r'(?:need|want|trying) to\s+(.*?)(?:\.|$)',
+            r'(?:goal|task) is to\s+(.*?)(?:\.|$)',
+            r'(?:working on|implementing)\s+(.*?)(?:\.|$)'
+        ]
         
-        try:
-            # Read the entire file
-            content = self.file_path.read_text()
+        for pattern in task_patterns:
+            if match := re.search(pattern, block, re.IGNORECASE):
+                return match.group(1).strip()
+                
+        return ""
+
+    def _extract_core_problems(self, block: str) -> List[str]:
+        """Extract core problems identified in the discussion."""
+        problems = []
+        
+        # Look for explicit problem statements
+        for pattern in self.issue_patterns:
+            matches = re.finditer(pattern, block, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                problem = match.group(1).strip()
+                if len(problem) > 10:  # Filter out too short matches
+                    problems.append(problem)
+                    
+        # Look for error traces
+        error_pattern = r'(?:Traceback.*?(?=\n\w|$)|Error:.*?(?=\n\w|$))'
+        if matches := re.finditer(error_pattern, block, re.DOTALL):
+            for match in matches:
+                error = match.group(0).split('\n')[0]  # Get first line of traceback
+                problems.append(error)
+                
+        # Look for "needs to" statements
+        needs_pattern = r'needs? to (?:be )?(.*?)(?:\.|$)'
+        if matches := re.finditer(needs_pattern, block, re.IGNORECASE):
+            for match in matches:
+                problems.append(f"Needs {match.group(1)}")
+                
+        return list(set(problems))  # Remove duplicates
+
+    def _extract_solutions(self, block: str) -> List[str]:
+        """Extract proposed solutions and approaches."""
+        solutions = []
+        
+        # Look for explicit solution patterns
+        for pattern in self.solution_patterns:
+            matches = re.finditer(pattern, block, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                solution = match.group(1).strip()
+                if len(solution) > 10:  # Filter out too short matches
+                    solutions.append(solution)
+                    
+        # Look for code blocks that implement solutions
+        code_blocks = re.finditer(r'```.*?\n(.*?)```', block, re.DOTALL)
+        for block_match in code_blocks:
+            code = block_match.group(1)
+            # Extract function/class definitions as solutions
+            if def_match := re.search(r'def (\w+)', code):
+                solutions.append(f"Implement {def_match.group(1)} function")
+            if class_match := re.search(r'class (\w+)', code):
+                solutions.append(f"Create {class_match.group(1)} class")
+                
+        return list(set(solutions))  # Remove duplicates
+
+    def _extract_file_changes(self, block: str) -> Dict[str, List[str]]:
+        """Extract file changes with semantic meaning."""
+        changes = {}
+        
+        # Look for file paths and associated changes
+        file_patterns = [
+            r'(?:in|update|modify|create|edit)\s+`?([/\w.-]+\.[/\w.-]+)`?',
+            r'(?:file|path):\s*`?([/\w.-]+\.[/\w.-]+)`?',
+            r'(?:^|\s)`?([/\w.-]+\.[/\w.-]+)`?:\s*\w+',
+        ]
+        
+        for pattern in file_patterns:
+            matches = re.finditer(pattern, block, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                file_path = match.group(1)
+                if file_path not in changes:
+                    changes[file_path] = []
+                    
+                # Look for associated changes in surrounding context
+                context = block[max(0, match.start() - 100):min(len(block), match.end() + 100)]
+                
+                # Extract change types
+                change_types = []
+                if 'add' in context.lower() or 'create' in context.lower():
+                    change_types.append('added')
+                if 'update' in context.lower() or 'modify' in context.lower():
+                    change_types.append('modified')
+                if 'remove' in context.lower() or 'delete' in context.lower():
+                    change_types.append('removed')
+                if 'fix' in context.lower():
+                    change_types.append('fixed')
+                    
+                changes[file_path].extend(change_types)
+                
+        return changes
+
+    def _extract_dependencies(self, block: str) -> Dict[str, List[str]]:
+        """Extract component dependencies."""
+        deps = {}
+        
+        # Look for import statements in code blocks
+        code_blocks = re.finditer(r'```.*?\n(.*?)```', block, re.DOTALL)
+        for block_match in code_blocks:
+            code = block_match.group(1)
+            # Extract imports
+            imports = re.finditer(r'(?:from|import)\s+([\w.]+)(?:\s+import\s+)?', code)
+            for imp in imports:
+                module = imp.group(1)
+                if '.' in module:
+                    parent = module.split('.')[0]
+                    if parent not in deps:
+                        deps[parent] = []
+                    deps[parent].append(module)
+                else:
+                    if 'external' not in deps:
+                        deps['external'] = []
+                    deps['external'].append(module)
+                    
+        # Look for dependency mentions in text
+        dep_patterns = [
+            r'depends? on\s+`?([\w.]+)`?',
+            r'requires?\s+`?([\w.]+)`?',
+            r'using\s+`?([\w.]+)`?',
+        ]
+        
+        for pattern in dep_patterns:
+            matches = re.finditer(pattern, block, re.IGNORECASE)
+            for match in matches:
+                dep = match.group(1)
+                if 'mentioned' not in deps:
+                    deps['mentioned'] = []
+                deps['mentioned'].append(dep)
+                
+        return deps
+
+    def _extract_reasoning_chain(self, block: str) -> List[Dict[str, Any]]:
+        """Extract the chain of reasoning in the discussion."""
+        chain = []
+        
+        # Look for cause-effect relationships
+        for pattern in self.reasoning_patterns:
+            matches = re.finditer(pattern, block, re.IGNORECASE | re.MULTILINE)
+            for match in matches:
+                reasoning = match.group(1).strip()
+                # Look for action and result in surrounding context
+                context = block[max(0, match.start() - 100):min(len(block), match.end() + 100)]
+                
+                # Try to identify action and result
+                action = ""
+                if action_match := re.search(r'(?:will|should|must|going to)\s+(.*?)(?:\s+because|\s+since|$)', context):
+                    action = action_match.group(1)
+                    
+                result = ""
+                if result_match := re.search(r'(?:this will|resulting in|leads to)\s+(.*?)(?:\.|$)', context):
+                    result = result_match.group(1)
+                    
+                if action or result:
+                    chain.append({
+                        "action": action or "unspecified",
+                        "reason": reasoning,
+                        "result": result or "unspecified"
+                    })
+                    
+        return chain
+
+    def _extract_state_changes(self, block: str) -> Dict[str, Any]:
+        """Extract important state changes."""
+        changes = {}
+        
+        # Look for state change indicators
+        state_patterns = {
+            'status': r'status(?:\s+is|\s+changed\s+to)?\s+`?([\w_]+)`?',
+            'phase': r'phase(?:\s+is|\s+moved\s+to)?\s+`?([\w_]+)`?',
+            'version': r'version(?:\s+is|\s+updated\s+to)?\s+`?([\w.]+)`?',
+            'config': r'config(?:\s+is|\s+set\s+to)?\s+`?([\w_]+)`?',
+        }
+        
+        for key, pattern in state_patterns.items():
+            if match := re.search(pattern, block, re.IGNORECASE):
+                changes[key] = match.group(1)
+                
+        # Look for variable assignments in code
+        code_blocks = re.finditer(r'```.*?\n(.*?)```', block, re.DOTALL)
+        for block_match in code_blocks:
+            code = block_match.group(1)
+            assignments = re.finditer(r'(\w+)\s*=\s*([^;\n]+)', code)
+            for assign in assignments:
+                var, value = assign.groups()
+                if var.isupper():  # Likely a constant/config
+                    changes[f"code_{var.lower()}"] = value.strip()
+                    
+        return changes
+
+    def _extract_error_context(self, block: str) -> Dict[str, List[str]]:
+        """Extract error context and related information."""
+        context = {}
+        
+        # Look for error traces
+        if 'Traceback' in block or 'Error:' in block:
+            traces = re.finditer(r'(?:Traceback.*?(?=\n\w|$)|Error:.*?(?=\n\w|$))', block, re.DOTALL)
+            for trace in traces:
+                error_text = trace.group(0)
+                
+                # Extract error type
+                if type_match := re.search(r'(\w+Error):', error_text):
+                    error_type = type_match.group(1)
+                    if error_type not in context:
+                        context[error_type] = []
+                        
+                    # Extract relevant lines
+                    lines = error_text.split('\n')
+                    context[error_type].extend([
+                        line.strip() for line in lines 
+                        if line.strip() and not line.startswith(' ')
+                    ])
+                    
+                    # Look for file references
+                    files = re.finditer(r'File "([^"]+)", line (\d+)', error_text)
+                    for file_match in files:
+                        context[error_type].append(f"In {file_match.group(1)}:{file_match.group(2)}")
+                        
+        # Look for error-related discussion
+        error_discussion = re.finditer(r'(?:error|issue|bug|problem).*?:\s*(.*?)(?:\n|$)', block, re.IGNORECASE)
+        for disc in error_discussion:
+            if 'discussion' not in context:
+                context['discussion'] = []
+            context['discussion'].append(disc.group(1).strip())
             
-            # Split into conversation chunks
-            chunks = content.split("\nHuman: ")
-            
-            # Track the earliest timestamp we find
-            self.start_time = datetime.datetime.now()
-            current_entry = None
-            
-            for chunk_index, chunk in enumerate(chunks):
-                if not chunk.strip():
+        return context
+
+    def _consolidate_problems(self, problems: List[str]) -> List[Dict[str, Any]]:
+        """Consolidate similar problems into higher-level issues with context."""
+        # First group by root cause
+        root_causes = {
+            'import': {
+                'pattern': r'(?:import|from)\s+([^\s]+)',
+                'problems': [],
+                'affected_modules': set()
+            },
+            'initialization': {
+                'pattern': r'(?:init|create|setup)\s+([^\s]+)',
+                'problems': [],
+                'affected_components': set()
+            },
+            'validation': {
+                'pattern': r'(?:valid|schema|type)\s+([^\s]+)',
+                'problems': [],
+                'affected_fields': set()
+            },
+            'undefined': {
+                'pattern': r'name\s+\'([^\']+)\'\s+is not defined',
+                'problems': [],
+                'missing_names': set()
+            },
+            'attribute': {
+                'pattern': r'has no attribute\s+\'([^\']+)\'',
+                'problems': [],
+                'missing_attrs': set()
+            },
+            'other': {
+                'pattern': None,
+                'problems': [],
+                'context': set()
+            }
+        }
+        
+        # Categorize each problem
+        for problem in problems:
+            problem = problem.strip()
+            if not problem:
+                continue
+                
+            matched = False
+            for category, info in root_causes.items():
+                if category == 'other':
                     continue
                     
-                # Look for timestamps
-                timestamp_matches = list(self.timestamp_pattern.finditer(chunk))
-                if timestamp_matches:
-                    for match in timestamp_matches:
-                        timestamp = datetime.datetime.strptime(match.group(), "%Y-%m-%d %H:%M:%S")
-                        if not self.start_time or timestamp < self.start_time:
-                            self.start_time = timestamp
-                
-                # Parse any error traces
-                error_traces = []
-                if "Traceback" in chunk:
-                    error = self.error_parser.parse_error(chunk)
-                    if error:
-                        error_traces.append(error)
-                        self.issues.add(f"error_{error.type}")
-                
-                # Extract code blocks
-                code_blocks = self.code_parser.extract_code_blocks(chunk)
-                
-                # Parse file references and changes
-                file_refs = []
-                for file_path in self.parse_file_references(chunk):
-                    component = self.parse_component_type(file_path)
-                    ref = FileReference(
-                        path=file_path,
-                        component=component,
-                        changes=self.analyze_changes(chunk, file_path)
-                    )
-                    file_refs.append(ref)
-                    self.modified_files[file_path] = ref
-                
-                # Extract discussion points
-                points = self.extract_discussion_points(chunk)
-                
-                # Determine action type based on content
-                action_type = None
-                if error_traces:
-                    action_type = ActionType.FIX
-                elif code_blocks:
-                    action_type = ActionType.MOD
-                elif points:
-                    action_type = ActionType.DISC
-                elif "test" in chunk.lower():
-                    action_type = ActionType.TEST
-                else:
-                    action_type = ActionType.DISC
-                
-                # Create history entry if we found anything interesting
-                if error_traces or code_blocks or file_refs or points:
-                    entry = HistoryEntry(
-                        timestamp=datetime.datetime.now().strftime("%H:%M"),
-                        action_type=action_type,
-                        target=self.determine_target(chunk),
-                        files=file_refs,
-                        impacts=self.extract_impacts(chunk),
-                        actions=self.parse_actions(chunk),
-                        error_traces=error_traces,
-                        discussion_points=points
-                    )
-                    self.history_entries.append(entry)
-                    
-                # Update components dependencies
-                for ref in file_refs:
-                    deps = self.parse_dependencies(chunk)
-                    if deps:
-                        self.components[ref.component.value].update(deps)
-            
-            # Create final state objects
-            self._create_current_state()
-            self._create_context()
-            
-            logger.info(f"Parsed {len(self.history_entries)} history entries")
-            
-        except Exception as e:
-            logger.error(f"Error parsing chat log: {str(e)}")
-            raise
-
-    def parse_actions(self, chunk: str) -> List[str]:
-        """
-        Extract actions from a chunk of text.
-        
-        Args:
-            chunk: Text chunk to analyze
-            
-        Returns:
-            List of action descriptions
-        """
-        actions = []
-        # Look for direct actions
-        for verb in self.action_verbs:
-            if verb in chunk.lower():
-                actions.append(verb)
-        
-        # Look for specific patterns
-        action_patterns = [
-            (r'need(?:s)? to (\w+)', 'needs'),
-            (r'should (\w+)', 'should'),
-            (r'must (\w+)', 'must'),
-            (r'will (\w+)', 'will'),
-            (r'going to (\w+)', 'planned')
-        ]
-        
-        for pattern, action_type in action_patterns:
-            matches = re.finditer(pattern, chunk.lower())
-            for match in matches:
-                actions.append(f"{action_type}_{match.group(1)}")
-        
-        return actions if actions else ["no_explicit_action"]
-
-    def _create_current_state(self):
-        """Create the current state object from parsed data."""
-        # Determine main task from history
-        if self.history_entries:
-            latest_entry = max(self.history_entries, key=lambda x: x.timestamp)
-            main_task = latest_entry.target
-        else:
-            main_task = "system_review"
-
-        # Determine next steps based on recent history
-        next_steps = set()
-        for entry in self.history_entries[-3:]:  # Look at last 3 entries
-            for action in entry.actions:
-                if action.startswith(('needs_', 'should_', 'must_', 'will_')):
-                    next_steps.add(action)
-
-        # Determine blockers from errors and dependencies
-        blockers = []
-        for issue in self.issues:
-            if "error" in issue or "missing" in issue:
-                blockers.append(issue)
-
-        self.current_state = CurrentState(
-            task=main_task,
-            state="in_progress" if self.issues else "ready",
-            modifications=list(self.modified_files.values()),
-            next_steps=list(next_steps) or ["verify_changes", "update_docs", "run_tests"],
-            blockers=blockers
-        )
-
-    def _create_context(self):
-        """Create the context object from parsed data."""
-        # Determine focus from history
-        focus_counts = defaultdict(int)
-        for entry in self.history_entries:
-            if entry.target != "general":
-                focus_counts[entry.target.split(':')[0]] += 1
-        
-        main_focus = max(focus_counts.items(), key=lambda x: x[1])[0] if focus_counts else "system_maintenance"
-
-        # Collect all dependencies
-        all_deps = set()
-        for deps in self.components.values():
-            all_deps.update(deps)
-
-        # Collect tools from code blocks and discussion
-        tools = {"git", "python3"}  # Basic defaults
-        for entry in self.history_entries:
-            for block in self.code_parser.extract_code_blocks('\n'.join(entry.discussion_points)):
-                if block['language'] not in tools:
-                    tools.add(block['language'])
-
-        # Build configs dict
-        configs = {
-            "schema_version": "1.0.0",
-            "data_version": "1.0.0"
-        }
-        for file_ref in self.modified_files.values():
-            if file_ref.component == ComponentType.CONFIG:
-                configs[file_ref.path] = "modified"
-
-        self.context = Context(
-            focus=main_focus,
-            dependencies=list(all_deps),
-            schema_version=configs["schema_version"],
-            data_version=configs["data_version"],
-            issues=list(self.issues),
-            tools=list(tools),
-            configs=configs,
-            artifacts=self._collect_artifacts()
-        )
-
-    def _collect_artifacts(self) -> List[str]:
-        """Collect all artifacts mentioned in the chat."""
-        artifacts = set()
-        for entry in self.history_entries:
-            for point in entry.discussion_points:
-                if 'artifact' in point.lower():
-                    # Look for artifact types or references
-                    matches = re.finditer(r'(?:artifact|file) [\'"]*([^\'"]+)[\'"]*', point, re.IGNORECASE)
+                if matches := re.finditer(info['pattern'], problem, re.IGNORECASE):
                     for match in matches:
-                        artifacts.add(match.group(1))
-        return list(artifacts)
-
-    def generate_spr(self) -> str:
-        """
-        Generate SPR format output from parsed data.
+                        matched = True
+                        info['problems'].append(problem)
+                        if category == 'import':
+                            info['affected_modules'].add(match.group(1))
+                        elif category == 'initialization':
+                            info['affected_components'].add(match.group(1))
+                        elif category == 'validation':
+                            info['affected_fields'].add(match.group(1))
+                        elif category == 'undefined':
+                            info['missing_names'].add(match.group(1))
+                        elif category == 'attribute':
+                            info['missing_attrs'].add(match.group(1))
+            
+            if not matched:
+                root_causes['other']['problems'].append(problem)
         
-        Returns:
-            String containing the complete SPR representation
-        """
-        if not self.context or not self.current_state:
-            raise ValueError("Must parse_log() before generating SPR")
+        # Convert to final format
+        consolidated = []
+        for category, info in root_causes.items():
+            if not info['problems']:
+                continue
+                
+            issue = {
+                'type': category,
+                'summary': self._generate_summary(category, info),
+                'details': list(set(info['problems'])),  # Remove duplicates
+                'context': {}
+            }
             
-        output = []
+            # Add category-specific context
+            if category == 'import':
+                issue['context']['modules'] = list(info['affected_modules'])
+            elif category == 'initialization':
+                issue['context']['components'] = list(info['affected_components'])
+            elif category == 'validation':
+                issue['context']['fields'] = list(info['affected_fields'])
+            elif category == 'undefined':
+                issue['context']['names'] = list(info['missing_names'])
+            elif category == 'attribute':
+                issue['context']['attributes'] = list(info['missing_attrs'])
+            elif category == 'other':
+                issue['context']['general'] = list(info['context'])
+            
+            consolidated.append(issue)
+            
+        return consolidated
+
+    def _generate_summary(self, category: str, info: Dict[str, Any]) -> str:
+        """Generate a concise summary of the issue category."""
+        if category == 'import':
+            modules = ', '.join(info['affected_modules'])
+            return f"Import issues with modules: {modules}"
+        elif category == 'initialization':
+            components = ', '.join(info['affected_components'])
+            return f"Initialization issues in components: {components}"
+        elif category == 'validation':
+            fields = ', '.join(info['affected_fields'])
+            return f"Validation issues with fields: {fields}"
+        elif category == 'undefined':
+            names = ', '.join(info['missing_names'])
+            return f"Undefined names: {names}"
+        elif category == 'attribute':
+            attrs = ', '.join(info['missing_attrs'])
+            return f"Missing attributes: {attrs}"
+        else:
+            return "Other issues found"
+
+    def _link_solutions_to_problems(self, problems: List[Dict[str, Any]], solutions: List[str]) -> List[Dict[str, Any]]:
+        """Link solutions to their corresponding problems."""
+        linked_problems = copy.deepcopy(problems)
         
-        # Header with full ISO timestamp
-        output.append(f"#T:{self.start_time.isoformat()}")
-        output.append("#S:COMPREHENSIVE_SYSTEM_REFACTOR")
-        output.append("#P:CRITICAL")
-        output.append("")
-
-        # Detailed history entries
-        for entry in sorted(self.history_entries, key=lambda x: x.timestamp):
-            output.append(f"@H[{entry.timestamp}]{entry.action_type.value}>{entry.target}{{")
+        for problem in linked_problems:
+            problem['solutions'] = []
+            problem_text = ' '.join([problem['summary']] + problem['details']).lower()
             
-            # Files with their components and changes
-            if entry.files:
-                output.append("  F:[")
-                for file_ref in entry.files:
-                    changes = ','.join(file_ref.changes) if file_ref.changes else 'no_changes'
-                    output.append(f"    {file_ref.path}:{file_ref.component.value}:{changes}")
-                output.append("  ]")
-            
-            # Impacts and actions
-            if entry.impacts:
-                output.append(f"  I:[{','.join(entry.impacts)}]")
-            if entry.actions:
-                output.append(f"  A:[{','.join(entry.actions)}]")
+            for solution in solutions:
+                # Look for solutions that mention the problem's context
+                if any(word.lower() in solution.lower() for word in problem['context'].get('modules', [])):
+                    problem['solutions'].append(solution)
+                elif any(word.lower() in solution.lower() for word in problem['context'].get('components', [])):
+                    problem['solutions'].append(solution)
+                elif any(word.lower() in solution.lower() for word in problem['context'].get('fields', [])):
+                    problem['solutions'].append(solution)
+                elif any(word.lower() in solution.lower() for word in problem['context'].get('names', [])):
+                    problem['solutions'].append(solution)
+                elif any(word.lower() in solution.lower() for word in problem['context'].get('attributes', [])):
+                    problem['solutions'].append(solution)
+                # Look for solutions that mention keywords from the problem
+                elif any(word in solution.lower() for word in problem_text.split()):
+                    problem['solutions'].append(solution)
+        
+        return linked_problems
+
+    def _organize_discussion(self, points: List[str]) -> Dict[str, List[str]]:
+        """Organize discussion points into categories."""
+        organized = {
+            'analysis': [],
+            'changes': [],
+            'errors': [],
+            'solutions': [],
+            'verifications': []
+        }
+        
+        for point in points:
+            point = point.strip()
+            # Skip empty or uninformative points
+            if not point or point in ['Analyzed', 'Edited', 'Edit:', 'CopyInsert']:
+                continue
                 
-            # Error traces if any
-            if entry.error_traces:
-                output.append("  E:[")
-                for error in entry.error_traces:
-                    output.append(f"    {error.type}:{error.message}")
-                    if error.file:
-                        output.append(f"    at {error.file}:{error.line}")
-                    if error.stack:
-                        output.append("    stack:[")
-                        for frame in error.stack:
-                            output.append(f"      {frame}")
-                        output.append("    ]")
-                output.append("  ]")
-                
-            # Discussion points if any
-            if entry.discussion_points:
-                output.append("  D:[")
-                for point in entry.discussion_points:
-                    output.append(f"    {point}")
-                output.append("  ]")
-                
-            output.append("}")
-            output.append("")
-
-        # Current state
-        output.append("@CUR{")
-        output.append(f"  TASK:{self.current_state.task}")
-        output.append(f"  STATE:{self.current_state.state}")
-        output.append("  MODS:[")
-        for file_ref in self.current_state.modifications:
-            output.append(f"    {file_ref.path}:{file_ref.component.value}")
-        output.append("  ]")
-        output.append(f"  NEXT:[{','.join(self.current_state.next_steps)}]")
-        if self.current_state.blockers:
-            output.append(f"  BLOCKERS:[{','.join(self.current_state.blockers)}]")
-        output.append("}")
-
-        # Context
-        output.append("")
-        output.append("@CTX{")
-        output.append(f"  FOCUS:{self.context.focus}")
-        output.append(f"  DEPS:[{','.join(self.context.dependencies)}]")
-        output.append(f"  SCHEMA_V:{self.context.schema_version}")
-        output.append(f"  DATA_V:{self.context.data_version}")
-        output.append(f"  ISSUES:[{','.join(self.context.issues)}]")
-        output.append(f"  TOOLS:[{','.join(self.context.tools)}]")
-        output.append("  CONFIGS:{")
-        for k, v in self.context.configs.items():
-            output.append(f"    {k}:{v}")
-        output.append("  }")
-        if self.context.artifacts:
-            output.append(f"  ARTIFACTS:[{','.join(self.context.artifacts)}]")
-        output.append("}")
-
-        # Component dependencies
-        if self.components:
-            output.append("")
-            output.append("@COMPONENTS{")
-            for component, deps in self.components.items():
-                if deps:  # Only show components with dependencies
-                    output.append(f"  {component}:[{','.join(deps)}]")
-            output.append("}")
-
-        return "\n".join(output)
+            # Categorize based on content
+            if any(word in point.lower() for word in ['error', 'exception', 'fail']):
+                organized['errors'].append(point)
+            elif any(word in point.lower() for word in ['update', 'change', 'modify']):
+                organized['changes'].append(point)
+            elif any(word in point.lower() for word in ['fix', 'solve', 'resolve']):
+                organized['solutions'].append(point)
+            elif any(word in point.lower() for word in ['check', 'verify', 'test']):
+                organized['verifications'].append(point)
+            else:
+                organized['analysis'].append(point)
+        
+        # Remove empty categories
+        return {k: v for k, v in organized.items() if v}
 
 def main():
     """Main entry point for the script."""
@@ -866,10 +896,7 @@ Example usage:
         
         if args.debug:
             # Print some statistics in debug mode
-            logger.debug(f"Found {len(chat_parser.history_entries)} history entries")
-            logger.debug(f"Found {len(chat_parser.modified_files)} modified files")
-            logger.debug(f"Found {len(chat_parser.issues)} issues")
-            logger.debug(f"Found {len(chat_parser.components)} components")
+            logger.debug(f"Found {len(chat_parser.context_blocks)} context blocks")
         
         return 0
             
