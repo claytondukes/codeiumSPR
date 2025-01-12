@@ -54,9 +54,6 @@ git clone https://github.com/claytondukes/codeiumSPR.git
 
 # Navigate to the directory
 cd codeiumSPR
-
-# Install dependencies
-pip install -r requirements.txt
 ```
 
 ## Usage
