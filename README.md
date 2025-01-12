@@ -1,14 +1,46 @@
-# Windsurf Chat Log Parser
+# codeiumSPR
 
-A specialized tool for optimizing chat history context in Windsurf, the world's
-first agentic IDE. This tool processes chat logs into a Semantic Parsing Record
+Because AI Assistants Shouldn't Have Goldfish Memory
+
+A specialized tool for optimizing chat history context in Windsurf IDE.
+
+This tool processes chat logs into a Semantic Parsing Record
 (SPR) format, enabling better context retention and understanding across coding
 sessions.
+
+`<not_really_an_ad>`
+
+## Hey Kids!
+
+Ever had your AI coding assistant forget what you were working on faster than 
+you forget your keys? Say hello to codeiumSPR :)
+
+Using my super-duper-not-a-pooper-scooper Semantic Parsing Record (SPR) script, 
+you can:
+
+- Bring the agent up to speed quicker than your cat knocking stuff off tables 
+  (unlike your ex)
+- Keep context around longer than your New Year's resolutions
+- Parse chat histories smoother than your pickup lines
+
+But wait, there's more! Act now and you'll get:
+
+- A new session that doesn't ask "wait, what were we doing again?"
+- A context window larger than your grandma's bumbum
+- Error tracking better than your excuses for missed deadlines
+
+P.S. Side effects may include: actually finishing your projects, fewer face-palm
+moments, a suspicious amount of productive coding sessions, explosive diarrhea,
+nausea, headaches, spontaneous combustion, and an inexplicable urge to
+high-five your rubber duck.
+
+P.P.S. No goldfish were harmed in the making of this neat little script. They
+just helped with the memory testing. 🐠
+
 
 ## Features
 
 - Semantic parsing of chat histories
-- Intelligent context extraction
 - Problem and solution linking
 - State change tracking
 - Dependency analysis
@@ -18,10 +50,10 @@ sessions.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/windsurfchat.git
+git clone https://github.com/claytondukes/codeiumSPR.git
 
 # Navigate to the directory
-cd windsurfchat
+cd codeiumSPR
 
 # Install dependencies
 pip install -r requirements.txt
@@ -29,7 +61,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Export your Windsurf chat history to a text file
+1. copy/paste your entire chat history to a text file
 2. Run the parser:
 
 ```bash
@@ -38,6 +70,16 @@ python cli.py chat_history.txt
 
 The tool will generate a `chat_history.spr.txt` file containing the optimized
 context.
+
+On your next session, tell it to read the file(s) and you're good to go!
+
+Example:
+
+```bash
+check the following for our session histories. in order of oldest to newest:
+@history.spr.txt @history2.spr.txt @history3.spr.txt @history4.spr.txt @history5.spr.txt 
+Then read all @docs 
+```
 
 ## SPR Format
 
@@ -102,20 +144,6 @@ The Semantic Parsing Record (SPR) uses the following structure:
 - pip package manager
 - Git
 
-### Setup Development Environment
-
-```bash
-# Create a virtual environment
-python -m venv venv
-
-# Activate the environment
-source venv/bin/activate  # Unix/macOS
-venv\Scripts\activate     # Windows
-
-# Install development dependencies
-pip install -r requirements-dev.txt
-```
-
 ## Contributing
 
 1. Fork the repository
@@ -123,14 +151,6 @@ pip install -r requirements-dev.txt
 3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
-## Best Practices
-
-- Follow PEP 8 style guide
-- Write comprehensive docstrings
-- Add unit tests for new features
-- Update documentation as needed
-- Use type hints for better code clarity
 
 ## Command Line Options
 
@@ -150,8 +170,13 @@ Arguments:
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## Support
+
+Pshaw...
+
 ## Acknowledgments
 
 - Windsurf IDE team
 - Codeium engineering team
 - Open source contributors
+  
