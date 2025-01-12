@@ -116,12 +116,6 @@ venv\Scripts\activate     # Windows
 pip install -r requirements-dev.txt
 ```
 
-### Running Tests
-
-```bash
-pytest tests/
-```
-
 ## Contributing
 
 1. Fork the repository
@@ -152,32 +146,9 @@ Arguments:
 - `--debug`: Enable debug mode with additional logging
 - `-o, --output`: Specify output file path (default: input_file.spr.txt)
 
-## Troubleshooting
-
-Common issues and solutions:
-
-1. **Parser Error**: Ensure chat history format is correct
-2. **Memory Issues**: Try processing a smaller chat history
-3. **Missing Context**: Check input file for completeness
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Security
-
-- Never commit sensitive data or API keys
-- Sanitize all input files
-- Follow secure coding practices
-- Report security issues responsibly
-
-## Support
-
-For support, please:
-
-1. Check the documentation
-2. Search existing issues
-3. Open a new issue if needed
 
 ## Acknowledgments
 
